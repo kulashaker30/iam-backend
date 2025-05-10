@@ -14,7 +14,7 @@ const jwtSecret = 'your_jwt_secret';
 // In-memory SQLite DB setup
 const db = new sqlite3.Database(':memory:');
 db.serialize(() => {
-    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, firstname TEXT, lastname TEXT, email TEXT)");
     db.run("CREATE TABLE groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, userIds TEXT, roleIds TEXT)");
     db.run("CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
 });
@@ -33,11 +33,16 @@ function authenticateToken(req, res, next) {
 
 // AUTH
 app.post('/api/register', (req, res) => {
-    const { username, password } = req.body;
-    db.run("INSERT INTO users (username, password) VALUES (?, ?)", [username, password], function(err) {
+    const { username, password, firstname, lastname, email } = req.body;
+    db.run(
+      "INSERT INTO users (username, password, firstname, lastname, email) VALUES (?, ?, ?, ?, ?)",
+      [username, password, firstname, lastname, email],
+      function(err) {
         if (err) return res.status(400).send('User exists');
-        res.status(201).json({ id: this.lastID, username });
-    });
+        res.status(201).json({ id: this.lastID, username, firstname, lastname, email });
+      }
+    );
+    
 });
 
 app.post('/api/login', (req, res) => {
@@ -51,25 +56,25 @@ app.post('/api/login', (req, res) => {
 
 // USERS
 app.get('/api/users', authenticateToken, (req, res) => {
-    db.all("SELECT id, username FROM users", [], (err, rows) => {
+    db.all("SELECT id, username, password, firstname, lastname, email FROM users", [], (err, rows) => {
         if (err) return res.sendStatus(500);
         res.json(rows);
     });
 });
 
 app.post('/api/users', authenticateToken, (req, res) => {
-    const { username, password } = req.body;
-    db.run("INSERT INTO users (username, password) VALUES (?, ?)", [username, password], function(err) {
+    const { username, password, firstname, lastname, email } = req.body;
+    db.run("INSERT INTO users (username, password, firstname, lastname, email) VALUES (?, ?, ?, ?, ?)", [username, password, firstname, lastname, email], function(err) {
         if (err) return res.status(400).send('User exists');
-        res.status(201).json({ id: this.lastID, username });
+        res.status(201).json({ id: this.lastID, username, firstname, lastname, email });
     });
 });
 
 app.put('/api/users/:id', authenticateToken, (req, res) => {
-    const { username, password } = req.body;
-    db.run("UPDATE users SET username = ?, password = ? WHERE id = ?", [username, password, req.params.id], function(err) {
+    const { firstname, lastname, email, username, password } = req.body;
+    db.run("UPDATE users SET firstname = ?, lastname = ?, email = ?, username = ?, password = ? WHERE id = ?", [firstname, lastname, email, username, password, req.params.id], function(err) {
         if (err || this.changes === 0) return res.sendStatus(404);
-        res.json({ id: req.params.id, username });
+        res.json({ id: parseInt(req.params.id), firstname, lastname, email, username, password });
     });
 });
 
