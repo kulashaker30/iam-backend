@@ -116,18 +116,49 @@ app.delete('/api/groups/:id', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/groups/:groupId/users', authenticateToken, (req, res) => {
-    const { userIds } = req.body;
-    db.get("SELECT * FROM groups WHERE id = ?", [req.params.groupId], (err, group) => {
-        if (err || !group) return res.sendStatus(404);
-        const existing = JSON.parse(group.userIds || '[]');
-        const updated = [...new Set([...existing, ...userIds])];
-        db.run("UPDATE groups SET userIds = ? WHERE id = ?", [JSON.stringify(updated), req.params.groupId], function(err) {
-            if (err) return res.sendStatus(500);
-            res.json({ id: group.id, name: group.name, userIds: updated, roleIds: JSON.parse(group.roleIds || '[]') });
-        });
+app.get('/api/groups/:groupId/users', authenticateToken, (req, res) => {
+    const groupId = req.params.groupId;
+  
+    db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
+      if (err || !group) return res.sendStatus(404);
+  
+      const userIds = JSON.parse(group.userIds || '[]');
+  
+      console.log('user ids' + userIds)
+      if (userIds.length === 0) {
+        return res.json([]); // No users assigned
+      }
+  
+      const placeholders = userIds.map(() => '?').join(',');
+      db.all(`SELECT id, username, email FROM users WHERE id IN (${placeholders})`, userIds, (err, users) => {
+        if (err) return res.sendStatus(500);
+        res.json(users);
+      });
     });
-});
+  });
+
+  app.post('/api/groups/:groupId/users', authenticateToken, (req, res) => {
+    const { userIds } = req.body;
+  
+    db.get("SELECT * FROM groups WHERE id = ?", [req.params.groupId], (err, group) => {
+      if (err || !group) return res.sendStatus(404);
+  
+      db.run(
+        "UPDATE groups SET userIds = ? WHERE id = ?",
+        [JSON.stringify(userIds), req.params.groupId],
+        function (err) {
+          if (err) return res.sendStatus(500);
+          res.json({
+            id: group.id,
+            name: group.name,
+            userIds,
+            roleIds: JSON.parse(group.roleIds || '[]'),
+          });
+        }
+      );
+    });
+  });
+  
 
 // ROLES
 app.get('/api/roles', authenticateToken, (req, res) => {
