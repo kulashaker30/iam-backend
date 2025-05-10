@@ -16,7 +16,7 @@ const db = new sqlite3.Database(':memory:');
 db.serialize(() => {
     db.run("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, firstname TEXT, lastname TEXT, email TEXT)");
     db.run("CREATE TABLE groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, userIds TEXT, roleIds TEXT)");
-    db.run("CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    db.run(`CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT, groupIds TEXT)`);
 });
 
 function authenticateToken(req, res, next) {
@@ -123,8 +123,7 @@ app.get('/api/groups/:groupId/users', authenticateToken, (req, res) => {
       if (err || !group) return res.sendStatus(404);
   
       const userIds = JSON.parse(group.userIds || '[]');
-  
-      console.log('user ids' + userIds)
+
       if (userIds.length === 0) {
         return res.json([]); // No users assigned
       }
