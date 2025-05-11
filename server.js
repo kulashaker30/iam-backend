@@ -2,11 +2,14 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
+const cors = require('cors');
+const { body } = require('express-validator');
+const { validationResult } = require('express-validator');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(bodyParser.json());
-const cors = require('cors');
 app.use(cors());
 
 const jwtSecret = 'your_jwt_secret';
@@ -17,6 +20,7 @@ db.serialize(() => {
     db.run("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, firstname TEXT, lastname TEXT, email TEXT)");
     db.run("CREATE TABLE groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, userIds TEXT, roleIds TEXT)");
     db.run(`CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT, groupIds TEXT)`);
+    db.run("CREATE TABLE IF NOT EXISTS permissions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, roleIds TEXT DEFAULT '[]')");
 });
 
 function authenticateToken(req, res, next) {
@@ -31,8 +35,39 @@ function authenticateToken(req, res, next) {
     });
 }
 
+function validate(req, res, next) {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+}
+
+const validateUser = [
+  body('username').isString().notEmpty(),
+  body('password').isString().notEmpty(),
+  body('firstname').optional().isString(),
+  body('lastname').optional().isString(),
+  body('email').optional().isEmail(),
+];
+
+const validateUserUpdate = [
+  body('username').optional().isString(),
+  body('password').optional().isString(),
+  body('firstname').optional().isString(),
+  body('lastname').optional().isString(),
+  body('email').optional().isEmail(),
+];
+
+const validateGroup = [body('name').isString().notEmpty()];
+const validateRole = [body('name').isString().notEmpty()];
+const validatePermission = [body('name').isString().notEmpty()];
+const validateUserIds = [body('userIds').isArray()];
+const validateGroupIds = [body('groupIds').isArray()];
+const validateRoleIds = [body('roleIds').isArray()];
+
 // AUTH
-app.post('/api/register', (req, res) => {
+app.post('/api/register', validateUser, validate, (req, res) => {
     const { username, password, firstname, lastname, email } = req.body;
     db.run(
       "INSERT INTO users (username, password, firstname, lastname, email) VALUES (?, ?, ?, ?, ?)",
@@ -42,7 +77,6 @@ app.post('/api/register', (req, res) => {
         res.status(201).json({ id: this.lastID, username, firstname, lastname, email });
       }
     );
-    
 });
 
 app.post('/api/login', (req, res) => {
@@ -62,7 +96,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/users', authenticateToken, (req, res) => {
+app.post('/api/users', authenticateToken, validateUser, validate, (req, res) => {
     const { username, password, firstname, lastname, email } = req.body;
     db.run("INSERT INTO users (username, password, firstname, lastname, email) VALUES (?, ?, ?, ?, ?)", [username, password, firstname, lastname, email], function(err) {
         if (err) return res.status(400).send('User exists');
@@ -70,7 +104,7 @@ app.post('/api/users', authenticateToken, (req, res) => {
     });
 });
 
-app.put('/api/users/:id', authenticateToken, (req, res) => {
+app.put('/api/users/:id', authenticateToken, validateUserUpdate, validate, (req, res) => {
     const { firstname, lastname, email, username, password } = req.body;
     db.run("UPDATE users SET firstname = ?, lastname = ?, email = ?, username = ?, password = ? WHERE id = ?", [firstname, lastname, email, username, password, req.params.id], function(err) {
         if (err || this.changes === 0) return res.sendStatus(404);
@@ -93,7 +127,7 @@ app.get('/api/groups', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/groups', authenticateToken, (req, res) => {
+app.post('/api/groups', authenticateToken, validateGroup, validate, (req, res) => {
     const { name } = req.body;
     db.run("INSERT INTO groups (name, userIds, roleIds) VALUES (?, ?, ?)", [name, JSON.stringify([]), JSON.stringify([])], function(err) {
         if (err) return res.sendStatus(500);
@@ -101,7 +135,7 @@ app.post('/api/groups', authenticateToken, (req, res) => {
     });
 });
 
-app.put('/api/groups/:id', authenticateToken, (req, res) => {
+app.put('/api/groups/:id', authenticateToken, validateGroup, validate, (req, res) => {
     const { name } = req.body;
     db.run("UPDATE groups SET name = ? WHERE id = ?", [name, req.params.id], function(err) {
         if (err || this.changes === 0) return res.sendStatus(404);
@@ -118,46 +152,28 @@ app.delete('/api/groups/:id', authenticateToken, (req, res) => {
 
 app.get('/api/groups/:groupId/users', authenticateToken, (req, res) => {
     const groupId = req.params.groupId;
-  
     db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
-      if (err || !group) return res.sendStatus(404);
-  
-      const userIds = JSON.parse(group.userIds || '[]');
-
-      if (userIds.length === 0) {
-        return res.json([]); // No users assigned
-      }
-  
-      const placeholders = userIds.map(() => '?').join(',');
-      db.all(`SELECT id, username, email FROM users WHERE id IN (${placeholders})`, userIds, (err, users) => {
-        if (err) return res.sendStatus(500);
-        res.json(users);
-      });
+        if (err || !group) return res.sendStatus(404);
+        const userIds = JSON.parse(group.userIds || '[]');
+        if (userIds.length === 0) return res.json([]);
+        const placeholders = userIds.map(() => '?').join(',');
+        db.all(`SELECT id, username, email FROM users WHERE id IN (${placeholders})`, userIds, (err, users) => {
+            if (err) return res.sendStatus(500);
+            res.json(users);
+        });
     });
-  });
+});
 
-  app.post('/api/groups/:groupId/users', authenticateToken, (req, res) => {
+app.post('/api/groups/:groupId/users', authenticateToken, validateUserIds, validate, (req, res) => {
     const { userIds } = req.body;
-  
     db.get("SELECT * FROM groups WHERE id = ?", [req.params.groupId], (err, group) => {
-      if (err || !group) return res.sendStatus(404);
-  
-      db.run(
-        "UPDATE groups SET userIds = ? WHERE id = ?",
-        [JSON.stringify(userIds), req.params.groupId],
-        function (err) {
-          if (err) return res.sendStatus(500);
-          res.json({
-            id: group.id,
-            name: group.name,
-            userIds,
-            roleIds: JSON.parse(group.roleIds || '[]'),
-          });
-        }
-      );
+        if (err || !group) return res.sendStatus(404);
+        db.run("UPDATE groups SET userIds = ? WHERE id = ?", [JSON.stringify(userIds), req.params.groupId], function(err) {
+            if (err) return res.sendStatus(500);
+            res.json({ id: group.id, name: group.name, userIds, roleIds: JSON.parse(group.roleIds || '[]') });
+        });
     });
-  });
-  
+});
 
 // ROLES
 app.get('/api/roles', authenticateToken, (req, res) => {
@@ -167,7 +183,7 @@ app.get('/api/roles', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/roles', authenticateToken, (req, res) => {
+app.post('/api/roles', authenticateToken, validateRole, validate, (req, res) => {
     const { name } = req.body;
     db.run("INSERT INTO roles (name) VALUES (?)", [name], function(err) {
         if (err) return res.sendStatus(500);
@@ -175,7 +191,7 @@ app.post('/api/roles', authenticateToken, (req, res) => {
     });
 });
 
-app.put('/api/roles/:id', authenticateToken, (req, res) => {
+app.put('/api/roles/:id', authenticateToken, validateRole, validate, (req, res) => {
     const { name } = req.body;
     db.run("UPDATE roles SET name = ? WHERE id = ?", [name, req.params.id], function(err) {
         if (err || this.changes === 0) return res.sendStatus(404);
@@ -190,37 +206,71 @@ app.delete('/api/roles/:id', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/groups/:groupId/roles', authenticateToken, (req, res) => {
+app.post('/api/groups/:groupId/roles', authenticateToken, validateRoleIds, validate, (req, res) => {
     const { roleIds } = req.body;
     db.get("SELECT * FROM groups WHERE id = ?", [req.params.groupId], (err, group) => {
         if (err || !group) return res.sendStatus(404);
-        db.run("UPDATE groups SET roleIds = ? WHERE id = ?", [JSON.stringify(userIds), req.params.groupId], function(err) {
+        db.run("UPDATE groups SET roleIds = ? WHERE id = ?", [JSON.stringify(roleIds), req.params.groupId], function(err) {
             if (err) return res.sendStatus(500);
-            res.json({ id: group.id, name: group.name, userIds: JSON.parse(group.userIds || '[]'), roleIds: updated });
+            res.json({ id: group.id, name: group.name, userIds: JSON.parse(group.userIds || '[]'), roleIds });
         });
     });
 });
 
-app.put('/api/roles/:roleId/groups', authenticateToken, (req, res) => {
+app.put('/api/roles/:roleId/groups', authenticateToken, validateGroupIds, validate, (req, res) => {
     const { groupIds } = req.body;
-  
     db.get("SELECT * FROM roles WHERE id = ?", [req.params.roleId], (err, role) => {
-      if (err || !role) return res.sendStatus(404);
-  
-      db.run(
-        "UPDATE roles SET groupIds = ? WHERE id = ?",
-        [JSON.stringify(groupIds), req.params.roleId],
-        function (err) {
-          if (err) return res.sendStatus(500);
-  
-          res.json({
-            id: role.id,
-            name: role.name,
-            groupIds,
-          });
-        }
-      );
+        if (err || !role) return res.sendStatus(404);
+        db.run("UPDATE roles SET groupIds = ? WHERE id = ?", [JSON.stringify(groupIds), req.params.roleId], function(err) {
+            if (err) return res.sendStatus(500);
+            res.json({ id: role.id, name: role.name, groupIds });
+        });
     });
-  });
+});
+
+// PERMISSIONS
+app.get('/api/permissions', authenticateToken, (req, res) => {
+    db.all("SELECT * FROM permissions", [], (err, rows) => {
+        if (err) return res.sendStatus(500);
+        res.json(rows);
+    });
+});
+
+app.post('/api/permissions', authenticateToken, validatePermission, validate, (req, res) => {
+    const { name } = req.body;
+    db.run("INSERT INTO permissions (name, roleIds) VALUES (?, ?)", [name, JSON.stringify([])], function(err) {
+        if (err) return res.sendStatus(500);
+        res.status(201).json({ id: this.lastID, name, roleIds: [] });
+    });
+});
+
+app.put('/api/permissions/:permissionId', authenticateToken, validatePermission, validate, (req, res) => {
+    const { name } = req.body;
+    db.get("SELECT * FROM permissions WHERE id = ?", [req.params.permissionId], (err, permission) => {
+        if (err || !permission) return res.sendStatus(404);
+        db.run("UPDATE permissions SET name = ? WHERE id = ?", [name, req.params.permissionId], function(err) {
+            if (err) return res.sendStatus(500);
+            res.json({ id: permission.id, name, roleIds: JSON.parse(permission.roleIds || '[]') });
+        });
+    });
+});
+
+app.delete('/api/permissions/:permissionId', authenticateToken, (req, res) => {
+    db.run("DELETE FROM permissions WHERE id = ?", [req.params.permissionId], function(err) {
+        if (err) return res.sendStatus(500);
+        res.sendStatus(204);
+    });
+});
+
+app.put('/api/permissions/:permissionId/roles', authenticateToken, validateRoleIds, validate, (req, res) => {
+    const { roleIds } = req.body;
+    db.get("SELECT * FROM permissions WHERE id = ?", [req.params.permissionId], (err, permission) => {
+        if (err || !permission) return res.sendStatus(404);
+        db.run("UPDATE permissions SET roleIds = ? WHERE id = ?", [JSON.stringify(roleIds), req.params.permissionId], function(err) {
+            if (err) return res.sendStatus(500);
+            res.json({ id: permission.id, name: permission.name, roleIds });
+        });
+    });
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
