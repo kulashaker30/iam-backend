@@ -194,13 +194,33 @@ app.post('/api/groups/:groupId/roles', authenticateToken, (req, res) => {
     const { roleIds } = req.body;
     db.get("SELECT * FROM groups WHERE id = ?", [req.params.groupId], (err, group) => {
         if (err || !group) return res.sendStatus(404);
-        const existing = JSON.parse(group.roleIds || '[]');
-        const updated = [...new Set([...existing, ...roleIds])];
-        db.run("UPDATE groups SET roleIds = ? WHERE id = ?", [JSON.stringify(updated), req.params.groupId], function(err) {
+        db.run("UPDATE groups SET roleIds = ? WHERE id = ?", [JSON.stringify(userIds), req.params.groupId], function(err) {
             if (err) return res.sendStatus(500);
             res.json({ id: group.id, name: group.name, userIds: JSON.parse(group.userIds || '[]'), roleIds: updated });
         });
     });
 });
+
+app.put('/api/roles/:roleId/groups', authenticateToken, (req, res) => {
+    const { groupIds } = req.body;
+  
+    db.get("SELECT * FROM roles WHERE id = ?", [req.params.roleId], (err, role) => {
+      if (err || !role) return res.sendStatus(404);
+  
+      db.run(
+        "UPDATE roles SET groupIds = ? WHERE id = ?",
+        [JSON.stringify(groupIds), req.params.roleId],
+        function (err) {
+          if (err) return res.sendStatus(500);
+  
+          res.json({
+            id: role.id,
+            name: role.name,
+            groupIds,
+          });
+        }
+      );
+    });
+  });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
